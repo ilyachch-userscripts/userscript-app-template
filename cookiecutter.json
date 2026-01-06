@@ -1,0 +1,9 @@
+{
+  "project_name": "My Advanced Script",
+  "project_slug": "{{ cookiecutter.project_name.lower().replace(' ', '-') }}",
+  "description": "Tampermonkey app",
+  "author": "ilyachch",
+  "github_username": "ilyachch-userscripts",
+  "version": "0.1.0",
+  "license": "MIT"
+}

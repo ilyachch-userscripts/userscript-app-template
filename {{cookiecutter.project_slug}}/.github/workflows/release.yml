@@ -1,0 +1,58 @@
+name: Release UserScript
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Get version from package.json
+        id: package-version
+        run: |
+          # Вытаскиваем версию (она там всегда чистая, например "1.0.1")
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION"
+
+      - name: Check if tag exists
+        uses: mukunku/tag-exists-action@v1.4.0
+        id: check-tag
+        with:
+          # Ищем тэг БЕЗ префикса v
+          tag: "${{ steps.package-version.outputs.version }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Release
+        if: steps.check-tag.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v1
+        with:
+          # Создаем тэг и имя релиза чисто из цифр
+          tag_name: "${{ steps.package-version.outputs.version }}"
+          name: "${{ steps.package-version.outputs.version }}"
+          generate_release_notes: true
+          files: |
+            dist/*.user.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
