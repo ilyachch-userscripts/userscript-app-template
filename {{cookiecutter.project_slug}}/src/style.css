@@ -1,0 +1,28 @@
+/* Пример стилей для нашего виджета */
+#my-userscript-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background-color: #222;
+  color: #fff;
+  padding: 15px;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+  z-index: 9999;
+  font-family: monospace;
+  border: 1px solid #444;
+}
+
+#my-userscript-container button {
+  background: #007bff;
+  border: none;
+  color: white;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 5px;
+}
+
+#my-userscript-container button:hover {
+  background: #0056b3;
+}
