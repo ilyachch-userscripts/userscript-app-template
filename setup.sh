@@ -14,12 +14,12 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # ==========================================
-# Logic
+# Phase 1: Collect all information
 # ==========================================
 
 echo -e "${BLUE}=== Initializing new project from template: $TEMPLATE_NAME ===${NC}"
 
-# 1. Request project name (if not passed as argument)
+# 1.1 Request project name (if not passed as argument)
 PROJECT_NAME="$1"
 if [ -z "$PROJECT_NAME" ]; then
     echo -e "${YELLOW}Enter project name (e.g., 'My Cool Script'):${NC}"
@@ -33,50 +33,107 @@ fi
 
 PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
 
-# 2. Check for generator (Cruft or Cookiecutter)
+# 1.2 Check if project folder already exists
+if [ -d "$PROJECT_SLUG" ]; then
+    echo -e "${RED}Error: Folder '$PROJECT_SLUG' already exists.${NC}"
+    exit 1
+fi
+
+# 1.3 Check for generator (Cruft or Cookiecutter)
 HAS_CRUFT=false
 HAS_COOKIECUTTER=false
+GENERATOR_TOOL=""
+GENERATOR_WARNING=""
 
 if command -v cruft &> /dev/null; then
     HAS_CRUFT=true
+    GENERATOR_TOOL="cruft"
 elif command -v cookiecutter &> /dev/null; then
     HAS_COOKIECUTTER=true
+    GENERATOR_TOOL="cookiecutter"
+    GENERATOR_WARNING="Template updates will be unavailable (cruft not installed)"
+fi
+
+# 1.4 GitHub CLI Check
+HAS_GH=false
+GH_USER=""
+GH_WARNING=""
+
+if command -v gh &> /dev/null; then
+    if gh auth status &> /dev/null; then
+        HAS_GH=true
+        GH_USER=$(gh api user -q ".login")
+    else
+        GH_WARNING="gh is installed, but you are not logged in (run: gh auth login)"
+    fi
 else
-    echo -e "${RED}Critical error: Neither cruft nor cookiecutter found.${NC}"
+    GH_WARNING="GitHub CLI (gh) not found"
+fi
+
+# ==========================================
+# Phase 2: Show summary and ask for confirmation
+# ==========================================
+
+echo -e "\n${BLUE}=== Configuration Summary ===${NC}"
+echo -e "Project name: ${GREEN}$PROJECT_NAME${NC}"
+echo -e "Project slug: ${GREEN}$PROJECT_SLUG${NC}"
+echo ""
+
+# Check if we can proceed at all
+if [ -z "$GENERATOR_TOOL" ]; then
+    echo -e "${RED}❌ Critical error: Neither cruft nor cookiecutter found.${NC}"
     echo "To run this script, you must install one of these tools."
     echo "Recommended: pip install cruft"
     echo "Alternative: pip install cookiecutter"
     exit 1
 fi
 
-# 3. GitHub CLI Check
-HAS_GH=false
-if command -v gh &> /dev/null; then
-    HAS_GH=true
-    # Check login status
-    if ! gh auth status &> /dev/null; then
-        echo -e "${YELLOW}Warning: gh is installed, but you are not logged in (gh auth login). Running in local mode.${NC}"
-        HAS_GH=false
-    fi
-else
-    echo -e "${YELLOW}Warning: GitHub CLI (gh) not found. GitHub repository will not be created automatically.${NC}"
+# Show generator status
+echo -e "Template generator: ${GREEN}$GENERATOR_TOOL${NC}"
+if [ -n "$GENERATOR_WARNING" ]; then
+    echo -e "   ${YELLOW}⚠ $GENERATOR_WARNING${NC}"
 fi
 
-# 4. Create project
+# Show GitHub status
+if [ "$HAS_GH" = true ]; then
+    echo -e "GitHub: ${GREEN}Available (user: $GH_USER)${NC}"
+    echo -e "   → Will create remote repository: ilyachch-userscripts/$PROJECT_SLUG"
+else
+    echo -e "GitHub: ${RED}Not available${NC}"
+    if [ -n "$GH_WARNING" ]; then
+        echo -e "   ${YELLOW}⚠ $GH_WARNING${NC}"
+    fi
+    echo -e "   → Will create local git repository only"
+fi
+
+echo ""
+
+# Ask for confirmation if there are any limitations
+if [ -n "$GENERATOR_WARNING" ] || [ "$HAS_GH" = false ]; then
+    echo -e "${YELLOW}There are some limitations. Do you want to continue? [y/N]${NC}"
+    read -r CONFIRM
+    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+        echo -e "${RED}Aborted by user.${NC}"
+        exit 0
+    fi
+fi
+
+# ==========================================
+# Phase 3: Execute changes
+# ==========================================
+
 echo -e "\n${BLUE}🚀 Generating project...${NC}"
 
 # Form JSON with parameters to avoid manual input
 EXTRA_CONTEXT="{\"project_name\": \"$PROJECT_NAME\", \"project_slug\": \"$PROJECT_SLUG\"}"
-# If gh exists, try to guess username, otherwise use placeholder
+# If gh exists, add username to context
 if [ "$HAS_GH" = true ]; then
-    GH_USER=$(gh api user -q ".login")
     EXTRA_CONTEXT="${EXTRA_CONTEXT%?}, \"github_username\": \"$GH_USER\"}"
 fi
 
 if [ "$HAS_CRUFT" = true ]; then
     cruft create "$TEMPLATE_REPO_URL" --extra-context "$EXTRA_CONTEXT" --no-input --overwrite-if-exists
 else
-    echo -e "${YELLOW}Cruft not found, using cookiecutter (template updates will be unavailable).${NC}"
     cookiecutter "$TEMPLATE_REPO_URL" --extra-context "$EXTRA_CONTEXT" --no-input --overwrite-if-exists
 fi
 
@@ -87,7 +144,7 @@ fi
 
 cd "$PROJECT_SLUG" || exit
 
-# 5. Git and GitHub Initialization
+# Git and GitHub Initialization
 echo -e "\n${BLUE}🔧 Configuring Git...${NC}"
 
 # If this is a fresh folder, git might not be there (cookiecutter doesn't create it)
@@ -112,7 +169,7 @@ else
     echo -e "${GREEN}✅ Local project ready (without remote repository).${NC}"
 fi
 
-# 6. Install dependencies (if package.json exists)
+# Install dependencies (if package.json exists)
 if [ -f "package.json" ]; then
     echo -e "\n${BLUE}📦 Installing NPM dependencies...${NC}"
     npm install
