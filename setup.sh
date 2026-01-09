@@ -63,6 +63,11 @@ if command -v gh &> /dev/null; then
     if gh auth status &> /dev/null; then
         HAS_GH=true
         GH_USER=$(gh api user -q ".login")
+        # Check if repository already exists on GitHub
+        if gh repo view "ilyachch-userscripts/$PROJECT_SLUG" &> /dev/null; then
+            echo -e "${RED}Error: Repository 'ilyachch-userscripts/$PROJECT_SLUG' already exists on GitHub.${NC}"
+            exit 1
+        fi
     else
         GH_WARNING="gh is installed, but you are not logged in (run: gh auth login)"
     fi
@@ -98,12 +103,13 @@ fi
 if [ "$HAS_GH" = true ]; then
     echo -e "GitHub: ${GREEN}Available (user: $GH_USER)${NC}"
     echo -e "   → Will create remote repository: ilyachch-userscripts/$PROJECT_SLUG"
+    echo -e "   → Will clone it locally and apply template"
 else
     echo -e "GitHub: ${RED}Not available${NC}"
     if [ -n "$GH_WARNING" ]; then
         echo -e "   ${YELLOW}⚠ $GH_WARNING${NC}"
     fi
-    echo -e "   → Will create local git repository only"
+    echo -e "   → Will create local folder and git repository only"
 fi
 
 echo ""
@@ -122,47 +128,66 @@ fi
 # Phase 3: Execute changes
 # ==========================================
 
-echo -e "\n${BLUE}🚀 Generating project...${NC}"
+echo -e "\n${BLUE}🚀 Starting project generation...${NC}"
+
+# --- Step 3.1: Create Repository (if GH available) ---
+if [ "$HAS_GH" = true ]; then
+    echo -e "Creating GitHub repository and cloning..."
+    # --clone flag creates the directory and initializes git
+    if gh repo create "ilyachch-userscripts/$PROJECT_SLUG" --public --clone; then
+        echo -e "${GREEN}✅ Repository created and cloned!${NC}"
+    else
+        echo -e "${RED}❌ Failed to create repository.${NC}"
+        exit 1
+    fi
+else
+    echo "Skipping GitHub creation (gh not available). Proceeding with local generation."
+fi
+
+# --- Step 3.2: Apply Template ---
+echo -e "Applying template..."
 
 # Form JSON with parameters to avoid manual input
 EXTRA_CONTEXT="{\"project_name\": \"$PROJECT_NAME\", \"project_slug\": \"$PROJECT_SLUG\"}"
-# If gh exists, add username to context
 if [ "$HAS_GH" = true ]; then
     EXTRA_CONTEXT="${EXTRA_CONTEXT%?}, \"github_username\": \"$GH_USER\"}"
 fi
 
+# Note: We MUST use --overwrite-if-exists (cruft) or -f (cookiecutter)
+# because if GH created the repo, the folder now exists.
 if [ "$HAS_CRUFT" = true ]; then
     cruft create "$TEMPLATE_REPO_URL" --extra-context "$EXTRA_CONTEXT" --no-input --overwrite-if-exists
 else
-    cookiecutter "$TEMPLATE_REPO_URL" --extra-context "$EXTRA_CONTEXT" --no-input --overwrite-if-exists
+    cookiecutter "$TEMPLATE_REPO_URL" --extra-context "$EXTRA_CONTEXT" --no-input -f
 fi
 
+# Check if folder exists (it should by now)
 if [ ! -d "$PROJECT_SLUG" ]; then
-    echo -e "${RED}Error: Project folder was not created.${NC}"
+    echo -e "${RED}Error: Project folder not found after generation.${NC}"
     exit 1
 fi
 
 cd "$PROJECT_SLUG" || exit
 
-# Git and GitHub Initialization
-echo -e "\n${BLUE}🔧 Configuring Git...${NC}"
-
-# If this is a fresh folder, git might not be there (cookiecutter doesn't create it)
-if [ ! -d ".git" ]; then
-    git init
-    git branch -M main
-fi
+# --- Step 3.3: Finalize Git ---
+echo -e "\n${BLUE}🔧 Finalizing Git configuration...${NC}"
 
 if [ "$HAS_GH" = true ]; then
-    echo "Creating GitHub repository..."
-    # Attempting to create. If name is taken — warn, but don't fail
-    if gh repo create "ilyachch-userscripts/$PROJECT_SLUG" --public --source=. --remote=origin --push; then
-        echo -e "${GREEN}✅ Repository created and code pushed!${NC}"
-    else
-        echo -e "${RED}❌ Failed to create repository (name might be taken).${NC}"
-        echo "Local git initialized."
-    fi
+    # We are already inside a git repo (from clone).
+    # We just need to commit the template files.
+    echo "Adding template files to git..."
+    git add .
+    git commit -m "Initialize project from template"
+
+    echo "Pushing to remote..."
+    git push origin HEAD
+    echo -e "${GREEN}✅ Code pushed to GitHub!${NC}"
 else
+    # Local only scenario (folder created by cruft, no git yet)
+    if [ ! -d ".git" ]; then
+        git init
+        git branch -M main
+    fi
     echo "Performing local commit..."
     git add .
     git commit -m "Initial commit from template"
