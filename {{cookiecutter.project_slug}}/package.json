@@ -9,8 +9,7 @@
     "lint": "eslint .",
     "format": "prettier --write ."
   },
-  "dependencies": {
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/tampermonkey": "^5.0.0",
     "@eslint/js": "^9.0.0",

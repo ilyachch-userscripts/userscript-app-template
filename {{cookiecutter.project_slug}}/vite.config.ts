@@ -3,7 +3,7 @@ import monkey from 'vite-plugin-monkey';
 
 // === Configuration ===
 const SCRIPT_NAME = '{{ cookiecutter.project_name }}';
-const NAMESPACE = 'https://github.com/{{ cookiecutter.github_username }}';
+const NAMESPACE = '{{ cookiecutter.namespace }}';
 const MATCH_URLS = ['*://*/*'];
 const ICON_URL = 'https://www.google.com/s2/favicons?sz=64&domain=github.com';
 // =====================
