@@ -5,5 +5,12 @@
   "author": "ilyachch",
   "github_username": "ilyachch-userscripts",
   "version": "0.1.0",
-  "license": "MIT"
+  "license": "MIT",
+  "run_at": [
+    "document-end",
+    "document-start",
+    "document-idle",
+    "document-body",
+    "context-menu"
+  ]
 }

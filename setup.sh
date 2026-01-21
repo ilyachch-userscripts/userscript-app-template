@@ -1,207 +1,334 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-# ==========================================
-# Settings (Set these for each template)
-# ==========================================
 TEMPLATE_REPO_URL="https://github.com/ilyachch-userscripts/userscript-app-template"
 TEMPLATE_NAME="Userscript App"
 
-# Output colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[1;33m'
+BLUE=$'\033[0;34m'
+NC=$'\033[0m'
 
-# ==========================================
-# Phase 1: Collect all information
-# ==========================================
+DRY_RUN=false
 
-echo -e "${BLUE}=== Initializing new project from template: $TEMPLATE_NAME ===${NC}"
+PROJECT_NAME="${PROJECT_NAME:-}"
+PROJECT_SLUG="${PROJECT_SLUG:-}"
+GH_USER="${GH_USER:-}"
+COOKIECUTTER_JSON_PATH="${COOKIECUTTER_JSON_PATH:-}"
 
-# 1.1 Request project name (if not passed as argument)
-PROJECT_NAME="$1"
-if [ -z "$PROJECT_NAME" ]; then
-    echo -e "${YELLOW}Enter project name (e.g., 'My Cool Script'):${NC}"
-    read PROJECT_NAME
-fi
-
-if [ -z "$PROJECT_NAME" ]; then
-    echo -e "${RED}Error: Project name cannot be empty.${NC}"
-    exit 1
-fi
-
-PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
-
-# 1.2 Check if project folder already exists
-if [ -d "$PROJECT_SLUG" ]; then
-    echo -e "${RED}Error: Folder '$PROJECT_SLUG' already exists.${NC}"
-    exit 1
-fi
-
-# 1.3 Check for generator (Cruft or Cookiecutter)
-HAS_CRUFT=false
-HAS_COOKIECUTTER=false
 GENERATOR_TOOL=""
-GENERATOR_WARNING=""
-
-if command -v cruft &> /dev/null; then
-    HAS_CRUFT=true
-    GENERATOR_TOOL="cruft"
-elif command -v cookiecutter &> /dev/null; then
-    HAS_COOKIECUTTER=true
-    GENERATOR_TOOL="cookiecutter"
-    GENERATOR_WARNING="Template updates will be unavailable (cruft not installed)"
-fi
-
-# 1.4 GitHub CLI Check
 HAS_GH=false
-GH_USER=""
-GH_WARNING=""
 
-if command -v gh &> /dev/null; then
-    if gh auth status &> /dev/null; then
-        HAS_GH=true
-        GH_USER=$(gh api user -q ".login")
-        # Check if repository already exists on GitHub
-        if gh repo view "ilyachch-userscripts/$PROJECT_SLUG" &> /dev/null; then
-            echo -e "${RED}Error: Repository 'ilyachch-userscripts/$PROJECT_SLUG' already exists on GitHub.${NC}"
-            exit 1
-        fi
-    else
-        GH_WARNING="gh is installed, but you are not logged in (run: gh auth login)"
+info()  { echo -e "${BLUE}$*${NC}"; }
+ok()    { echo -e "${GREEN}$*${NC}"; }
+warn()  { echo -e "${YELLOW}$*${NC}"; }
+err()   { echo -e "${RED}$*${NC}" >&2; }
+die()   { err "Error: $*"; exit 1; }
+
+run() {
+  if $DRY_RUN; then
+    echo "+ $*"
+  else
+    "$@"
+  fi
+}
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  setup.sh [--project-name NAME] [--project-slug SLUG] [--gh-user USER]
+           [--cookiecutter-json PATH] [--dry-run] [--help]
+
+Resolution order:
+  args -> environment -> cookiecutter.json (if available) -> git/gh -> defaults
+
+Environment variables:
+  PROJECT_NAME, PROJECT_SLUG, GH_USER, COOKIECUTTER_JSON_PATH
+USAGE
+}
+
+have_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+slugify() {
+  local s="${1:-}"
+  s="$(echo "$s" | tr '[:upper:]' '[:lower:]')"
+  s="$(echo "$s" | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g')"
+  echo "$s"
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project-name) PROJECT_NAME="${2:-}"; shift 2 ;;
+      --project-slug) PROJECT_SLUG="${2:-}"; shift 2 ;;
+      --gh-user)      GH_USER="${2:-}"; shift 2 ;;
+      --cookiecutter-json) COOKIECUTTER_JSON_PATH="${2:-}"; shift 2 ;;
+      --dry-run) DRY_RUN=true; shift ;;
+      --help|-h) usage; exit 0 ;;
+      *)
+        die "Unknown argument: $1 (use --help)"
+        ;;
+    esac
+  done
+}
+
+detect_cookiecutter_json() {
+  if [[ -n "${COOKIECUTTER_JSON_PATH:-}" ]]; then
+    [[ -f "$COOKIECUTTER_JSON_PATH" ]] || die "cookiecutter.json not found at: $COOKIECUTTER_JSON_PATH"
+    return 0
+  fi
+
+  if [[ -f "./cookiecutter.json" ]]; then
+    COOKIECUTTER_JSON_PATH="./cookiecutter.json"
+    return 0
+  fi
+
+  local script_dir=""
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -f "$script_dir/cookiecutter.json" ]]; then
+    COOKIECUTTER_JSON_PATH="$script_dir/cookiecutter.json"
+    return 0
+  fi
+
+  COOKIECUTTER_JSON_PATH=""
+}
+
+json_get() {
+  local file="$1"
+  local key="$2"
+
+  if have_cmd jq; then
+    jq -r --arg k "$key" '.[$k] // empty' "$file" 2>/dev/null || true
+    return 0
+  fi
+
+  if have_cmd python3; then
+    python3 - <<PY 2>/dev/null || true
+import json, sys
+p = ${file@Q}
+k = ${key@Q}
+try:
+    with open(p, "r", encoding="utf-8") as f:
+        d = json.load(f)
+    v = d.get(k, "")
+    if v is None:
+        v = ""
+    if isinstance(v, (dict, list)):
+        v = ""
+    print(v)
+except Exception:
+    pass
+PY
+    return 0
+  fi
+
+  echo ""
+}
+
+load_from_cookiecutter_json() {
+  [[ -n "${COOKIECUTTER_JSON_PATH:-}" ]] || return 0
+
+  local v=""
+
+  if [[ -z "${PROJECT_NAME:-}" ]]; then
+    v="$(json_get "$COOKIECUTTER_JSON_PATH" "project_name")"
+    [[ -n "$v" ]] && PROJECT_NAME="$v"
+  fi
+
+  if [[ -z "${GH_USER:-}" ]]; then
+    v="$(json_get "$COOKIECUTTER_JSON_PATH" "github_username")"
+    [[ -n "$v" ]] && GH_USER="$v"
+  fi
+
+  if [[ -z "${PROJECT_SLUG:-}" ]]; then
+    v="$(json_get "$COOKIECUTTER_JSON_PATH" "project_slug")"
+    if [[ -n "$v" && "$v" != *"{{"* ]]; then
+      PROJECT_SLUG="$v"
     fi
-else
-    GH_WARNING="GitHub CLI (gh) not found"
-fi
+  fi
+}
 
-# ==========================================
-# Phase 2: Show summary and ask for confirmation
-# ==========================================
+try_get_gh_user() {
+  if [[ -n "${GH_USER:-}" ]]; then
+    return 0
+  fi
 
-echo -e "\n${BLUE}=== Configuration Summary ===${NC}"
-echo -e "Project name: ${GREEN}$PROJECT_NAME${NC}"
-echo -e "Project slug: ${GREEN}$PROJECT_SLUG${NC}"
-echo ""
+  if have_cmd gh && gh auth status >/dev/null 2>&1; then
+    local u=""
+    u="$(gh api user -q ".login" 2>/dev/null || true)"
+    [[ -n "$u" ]] && GH_USER="$u"
+  fi
 
-# Check if we can proceed at all
-if [ -z "$GENERATOR_TOOL" ]; then
-    echo -e "${RED}❌ Critical error: Neither cruft nor cookiecutter found.${NC}"
-    echo "To run this script, you must install one of these tools."
-    echo "Recommended: pip install cruft"
-    echo "Alternative: pip install cookiecutter"
-    exit 1
-fi
+  if [[ -z "${GH_USER:-}" ]]; then
+    GH_USER="$(git config --get github.user 2>/dev/null || true)"
+  fi
+}
 
-# Show generator status
-echo -e "Template generator: ${GREEN}$GENERATOR_TOOL${NC}"
-if [ -n "$GENERATOR_WARNING" ]; then
-    echo -e "   ${YELLOW}⚠ $GENERATOR_WARNING${NC}"
-fi
+detect_generator() {
+  if have_cmd cruft; then
+    GENERATOR_TOOL="cruft"
+    return 0
+  fi
+  if have_cmd cookiecutter; then
+    GENERATOR_TOOL="cookiecutter"
+    return 0
+  fi
+  die "Neither 'cruft' nor 'cookiecutter' found. Install one of them."
+}
 
-# Show GitHub status
-if [ "$HAS_GH" = true ]; then
-    echo -e "GitHub: ${GREEN}Available (user: $GH_USER)${NC}"
-    echo -e "   → Will create remote repository: ilyachch-userscripts/$PROJECT_SLUG"
-    echo -e "   → Will clone it locally and apply template"
-else
-    echo -e "GitHub: ${RED}Not available${NC}"
-    if [ -n "$GH_WARNING" ]; then
-        echo -e "   ${YELLOW}⚠ $GH_WARNING${NC}"
-    fi
-    echo -e "   → Will create local folder and git repository only"
-fi
+detect_github() {
+  if have_cmd gh && gh auth status >/dev/null 2>&1; then
+    HAS_GH=true
+  else
+    HAS_GH=false
+  fi
+}
 
-echo ""
+ensure_values() {
+  if [[ -z "${PROJECT_NAME:-}" ]]; then
+    die "PROJECT_NAME is required (use --project-name or env PROJECT_NAME or cookiecutter.json)."
+  fi
 
-# Ask for confirmation if there are any limitations
-if [ -n "$GENERATOR_WARNING" ] || [ "$HAS_GH" = false ]; then
-    echo -e "${YELLOW}There are some limitations. Do you want to continue? [y/N]${NC}"
-    read -r CONFIRM
-    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-        echo -e "${RED}Aborted by user.${NC}"
-        exit 0
-    fi
-fi
+  if [[ -z "${PROJECT_SLUG:-}" ]]; then
+    PROJECT_SLUG="$(slugify "$PROJECT_NAME")"
+  fi
 
-# ==========================================
-# Phase 3: Execute changes
-# ==========================================
+  if [[ -z "${PROJECT_SLUG:-}" ]]; then
+    die "PROJECT_SLUG could not be derived."
+  fi
+}
 
-echo -e "\n${BLUE}🚀 Starting project generation...${NC}"
+check_local_folder() {
+  if [[ -d "$PROJECT_SLUG" ]]; then
+    die "Folder '$PROJECT_SLUG' already exists."
+  fi
+}
 
-# --- Step 3.1: Create Repository (if GH available) ---
-if [ "$HAS_GH" = true ]; then
-    echo -e "Creating GitHub repository and cloning..."
-    # --clone flag creates the directory and initializes git
-    if gh repo create "ilyachch-userscripts/$PROJECT_SLUG" --public --clone; then
-        echo -e "${GREEN}✅ Repository created and cloned!${NC}"
-    else
-        echo -e "${RED}❌ Failed to create repository.${NC}"
-        exit 1
-    fi
-else
-    echo "Skipping GitHub creation (gh not available). Proceeding with local generation."
-fi
+check_remote_repo_conflict() {
+  $HAS_GH || return 0
 
-# --- Step 3.2: Apply Template ---
-echo -e "Applying template..."
+  try_get_gh_user
+  if [[ -z "${GH_USER:-}" ]]; then
+    warn "GitHub is available, but GH_USER is not detected; remote repo will not be created."
+    HAS_GH=false
+    return 0
+  fi
 
-# Form JSON with parameters to avoid manual input
-EXTRA_CONTEXT="{\"project_name\": \"$PROJECT_NAME\", \"project_slug\": \"$PROJECT_SLUG\"}"
-if [ "$HAS_GH" = true ]; then
-    EXTRA_CONTEXT="${EXTRA_CONTEXT%?}, \"github_username\": \"$GH_USER\"}"
-fi
+  if gh repo view "$GH_USER/$PROJECT_SLUG" >/dev/null 2>&1; then
+    die "Repository '$GH_USER/$PROJECT_SLUG' already exists on GitHub."
+  fi
+}
 
-# Note: We MUST use --overwrite-if-exists (cruft) or -f (cookiecutter)
-# because if GH created the repo, the folder now exists.
-if [ "$HAS_CRUFT" = true ]; then
-    cruft create "$TEMPLATE_REPO_URL" --extra-context "$EXTRA_CONTEXT" --no-input --overwrite-if-exists
-else
-    cookiecutter "$TEMPLATE_REPO_URL" --extra-context "$EXTRA_CONTEXT" --no-input -f
-fi
+print_summary() {
+  info "=== Initializing new project from template: $TEMPLATE_NAME ==="
+  echo -e "Project name: ${GREEN}${PROJECT_NAME}${NC}"
+  echo -e "Project slug: ${GREEN}${PROJECT_SLUG}${NC}"
+  echo -e "Generator:    ${GREEN}${GENERATOR_TOOL}${NC}"
+  if $HAS_GH; then
+    local user="${GH_USER:-}"
+    [[ -n "$user" ]] && echo -e "GitHub:       ${GREEN}enabled${NC} (user: $user)" || echo -e "GitHub:       ${GREEN}enabled${NC}"
+  else
+    echo -e "GitHub:       ${YELLOW}disabled${NC}"
+  fi
+  $DRY_RUN && echo -e "Mode:         ${YELLOW}dry-run${NC}"
+  echo ""
+}
 
-# Check if folder exists (it should by now)
-if [ ! -d "$PROJECT_SLUG" ]; then
-    echo -e "${RED}Error: Project folder not found after generation.${NC}"
-    exit 1
-fi
+make_extra_context() {
+  local ctx
+  ctx="{\"project_name\": \"${PROJECT_NAME}\", \"project_slug\": \"${PROJECT_SLUG}\""
+  if $HAS_GH && [[ -n "${GH_USER:-}" ]]; then
+    ctx="${ctx}, \"github_username\": \"${GH_USER}\""
+  fi
+  ctx="${ctx}}"
+  echo "$ctx"
+}
 
-cd "$PROJECT_SLUG" || exit
+create_repo_and_clone_if_needed() {
+  $HAS_GH || return 0
+  [[ -n "${GH_USER:-}" ]] || return 0
 
-# --- Step 3.3: Finalize Git ---
-echo -e "\n${BLUE}🔧 Finalizing Git configuration...${NC}"
+  info "Creating GitHub repository and cloning..."
+  run gh repo create "$GH_USER/$PROJECT_SLUG" --public --clone
+  ok "Repository created and cloned."
+}
 
-if [ "$HAS_GH" = true ]; then
-    # We are already inside a git repo (from clone).
-    # We just need to commit the template files.
-    echo "Adding template files to git..."
-    git add .
-    git commit -m "Initialize project from template"
+apply_template() {
+  info "Applying template..."
+  local extra_context
+  extra_context="$(make_extra_context)"
 
-    echo "Pushing to remote..."
-    git push origin HEAD
-    echo -e "${GREEN}✅ Code pushed to GitHub!${NC}"
-else
-    # Local only scenario (folder created by cruft, no git yet)
-    if [ ! -d ".git" ]; then
-        git init
-        git branch -M main
-    fi
-    echo "Performing local commit..."
-    git add .
-    git commit -m "Initial commit from template"
-    echo -e "${GREEN}✅ Local project ready (without remote repository).${NC}"
-fi
+  if [[ "$GENERATOR_TOOL" == "cruft" ]]; then
+    run cruft create "$TEMPLATE_REPO_URL" \
+      --extra-context "$extra_context" \
+      --no-input \
+      --overwrite-if-exists
+  else
+    run cookiecutter "$TEMPLATE_REPO_URL" \
+      --extra-context "$extra_context" \
+      --no-input \
+      -f
+  fi
+}
 
-# Install dependencies (if package.json exists)
-if [ -f "package.json" ]; then
-    echo -e "\n${BLUE}📦 Installing NPM dependencies...${NC}"
-    npm install
-fi
+enter_project_dir_or_die() {
+  if [[ ! -d "$PROJECT_SLUG" ]]; then
+    die "Project folder not found after generation: $PROJECT_SLUG"
+  fi
+  run cd "$PROJECT_SLUG"
+}
 
-echo -e "\n${GREEN}=== Done! ===${NC}"
-echo -e "Project folder: ${BLUE}$(pwd)${NC}"
-if [ "$HAS_GH" = false ]; then
-    echo -e "${YELLOW}Don't forget to create the repository manually or install gh cli!${NC}"
-fi
+finalize_git() {
+  info "Finalizing git..."
+  if $HAS_GH && [[ -n "${GH_USER:-}" ]]; then
+    run git add .
+    run git commit -m "Initialize project from template"
+    run git push origin HEAD
+    ok "Code pushed to GitHub."
+    return 0
+  fi
+
+  if [[ ! -d ".git" ]]; then
+    run git init
+    run git branch -M main
+  fi
+  run git add .
+  run git commit -m "Initial commit from template"
+  ok "Local project ready."
+}
+
+install_deps_if_any() {
+  if [[ -f "package.json" ]] && have_cmd npm; then
+    info "Installing NPM dependencies..."
+    run npm install
+  fi
+}
+
+main() {
+  parse_args "$@"
+  detect_cookiecutter_json
+  load_from_cookiecutter_json
+  detect_generator
+  detect_github
+  try_get_gh_user
+  ensure_values
+  check_local_folder
+  check_remote_repo_conflict
+  print_summary
+
+  create_repo_and_clone_if_needed
+  apply_template
+  enter_project_dir_or_die
+  finalize_git
+  install_deps_if_any
+
+  ok "=== Done! ==="
+  if $DRY_RUN; then
+    warn "Dry-run mode: no changes were applied."
+  else
+    echo -e "Project folder: ${BLUE}$(pwd)${NC}"
+  fi
+}
+
+main "$@"
