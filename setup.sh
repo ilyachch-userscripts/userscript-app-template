@@ -166,15 +166,11 @@ try_get_gh_user() {
 }
 
 detect_generator() {
-  if have_cmd cruft; then
-    GENERATOR_TOOL="cruft"
-    return 0
-  fi
   if have_cmd cookiecutter; then
     GENERATOR_TOOL="cookiecutter"
     return 0
   fi
-  die "Neither 'cruft' nor 'cookiecutter' found. Install one of them."
+  die "'cookiecutter' not found. Install it with: pip install cookiecutter"
 }
 
 detect_github() {
@@ -259,17 +255,10 @@ apply_template() {
   local extra_context
   extra_context="$(make_extra_context)"
 
-  if [[ "$GENERATOR_TOOL" == "cruft" ]]; then
-    run cruft create "$TEMPLATE_REPO_URL" \
-      --extra-context "$extra_context" \
-      --no-input \
-      --overwrite-if-exists
-  else
-    run cookiecutter "$TEMPLATE_REPO_URL" \
-      --extra-context "$extra_context" \
-      --no-input \
-      -f
-  fi
+  run cookiecutter "$TEMPLATE_REPO_URL" \
+    --extra-context "$extra_context" \
+    --no-input \
+    -f
 }
 
 enter_project_dir_or_die() {

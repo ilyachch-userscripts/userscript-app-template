@@ -20,6 +20,7 @@ export default defineConfig({
         description: '{{ cookiecutter.description }}',
         author: '{{ cookiecutter.author }}',
         grant: ['GM_addStyle'],
+        license: '{{ cookiecutter.license }}',
         homepageURL: 'https://github.com/{{ cookiecutter.github_username }}/{{ cookiecutter.project_slug }}',
         supportURL: 'https://github.com/{{ cookiecutter.github_username }}/{{ cookiecutter.project_slug }}/issues',
         updateURL: 'https://github.com/{{ cookiecutter.github_username }}/{{ cookiecutter.project_slug }}/releases/latest/download/{{ cookiecutter.project_slug }}.user.js',
