@@ -5,13 +5,16 @@ import monkey from 'vite-plugin-monkey';
 const SCRIPT_NAME = '{{ cookiecutter.project_name }}';
 const NAMESPACE = '{{ cookiecutter.namespace }}';
 const MATCH_URLS = ['*://*/*'];
-const ICON_URL = 'https://www.google.com/s2/favicons?sz=64&domain=github.com';
+const ICON_URL = 'https://www.google.com/s2/favicons?sz=64&domain={{ cookiecutter.base_domain }}';
 // =====================
 
 export default defineConfig({
   plugins: [
     monkey({
       entry: 'src/main.ts',
+      build: {
+        fileName: '{{ cookiecutter.project_slug }}.user.js',
+      },
       userscript: {
         name: SCRIPT_NAME,
         namespace: NAMESPACE,
@@ -26,7 +29,7 @@ export default defineConfig({
         updateURL: 'https://github.com/{{ cookiecutter.github_username }}/{{ cookiecutter.project_slug }}/releases/latest/download/{{ cookiecutter.project_slug }}.user.js',
         downloadURL: 'https://github.com/{{ cookiecutter.github_username }}/{{ cookiecutter.project_slug }}/releases/latest/download/{{ cookiecutter.project_slug }}.user.js',
         'run-at': '{{ cookiecutter.run_at }}',
-      },
+      }
     }),
   ],
 });

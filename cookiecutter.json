@@ -1,6 +1,7 @@
 {
   "project_name": "My Advanced Script",
   "project_slug": "{{ cookiecutter.project_name.lower().replace(' ', '-') }}",
+  "base_domain": "github.com",
   "description": "Tampermonkey app",
   "author": "ilyachch",
   "namespace": "https://github.com/{{ cookiecutter.author }}",

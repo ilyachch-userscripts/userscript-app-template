@@ -7,19 +7,23 @@ Advanced template with Vite, TypeScript, ESLint and GitHub Actions.
 Run this command in your terminal to create a new project:
 
 ```bash
-curl -s https://raw.githubusercontent.com/ilyachch-userscripts/userscript-app-template/main/setup.sh | bash -s -- "My Script Name"
+uv run /path/to/userscript-app-template/setup.py --project-name "My Script Name"
 ```
 
 or
 
 ```bash
-curl -s https://raw.githubusercontent.com/ilyachch-userscripts/userscript-app-template/main/setup.sh | bash -s --
+curl -fsSL https://raw.githubusercontent.com/ilyachch-userscripts/userscript-app-template/main/setup.py -o /tmp/userscript-template-setup.py
+uv run /tmp/userscript-template-setup.py --project-name "My Script Name"
 ```
 
 ## Requirements
 
 - Node.js (v18+)
-- Cookiecutter (`pip install cookiecutter`)
+- `uv` (installs Python dependencies from the script metadata automatically)
+- Typer-powered CLI
 - GitHub CLI (`gh`) - Optional, for auto-creating repositories
 
-If `gh` is missing, the script will create a local folder with git initialized.
+If `gh` is missing (or not authenticated), the script skips GitHub repository creation and initializes a local git repository.
+
+All keys from `cookiecutter.json` are accepted as CLI flags automatically (`key_name` -> `--key-name`) and can also be provided through environment variables (`KEY_NAME`).
